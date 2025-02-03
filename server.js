@@ -4,6 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const mo = require('./modules/utils');
 const lang = require('./lang/en/en'); // Import the language file
+const PORT =  8080; // Use environment PORT or default to 8080
+const FILE_PATH = path.join(__dirname, 'file.txt');
 
 class Server{
     constructor(port, fileHandler){
@@ -16,6 +18,7 @@ class Server{
         const parsedUrl = url.parse(req.url,true);
       
         if(parsedUrl.pathname === '/getDate/'){
+            console.log('getDate');
             console.log(parsedUrl.query);
             let message = lang.message
             .replace("{name}", parsedUrl.query.name)
@@ -25,45 +28,56 @@ class Server{
             res.end(message);
         }
         else if(parsedUrl.pathname === '/writeFile/'){
+            console.log('writeFile');
             const text = parsedUrl.query.text;
             if(!text){
                 res.writeHead(400, {'Content-Type': 'text/plain'});
-                return res.end('Bad Request: Missing text parameter');
+                return res.end(lang.badRequest);
             }
 
             this.fileHandler.appendText(text, (err) => {
                 if(err){
                     res.writeHead(500, {'Content-Type': 'text/plain'});
-                    res.end('Internal Server Error');
+                    return res.end(lang.serverError);
                 }
                 res.writeHead(200, {'Content-Type': 'text/plain'});
-                res.end(`${text}`)
+                res.end(`${text}\n`)
             })
+            return;
         } 
 
-        else if(parsedUrl.pathname.startsWith('/readFile/')){
-            this.fileHandler.readFile((err, data) => {
-                if(err){
-                    if(err.code === 'ENOENT'){
-                        res.writeHead(404, {'Content-Type': 'text/plain'});
-                        return res.end(`Error 404 : ${this.FileHandler.filePath} not found`);
-                    }
-                    res.writeHead(500, {'Content-Type': 'text/plain'});
-                    res.end('Internal Server Error');
+        else if (parsedUrl.pathname.startsWith('/readFile/')) {
+            const pathParts = parsedUrl.pathname.split('/');
+            const fileName = pathParts[pathParts.length - 1];
+            console.log("fileName: ", fileName);
+            if (req.method === 'GET') {
+                if (fileName) {
+                    const filePath = `./${fileName}`;
+                    fs.access(filePath, fs.constants.F_OK, (err) => {
+                        if (err) {
+                            res.writeHead(404, { 'Content-Type': 'text/plain' });
+                            return res.end(lang.pageNotFound.replace("{file}", filePath));
+                        } else {
+                            this.fileHandler.readFile(filePath, res);
+                        }
+                    });
                 }
-                res.writeHead(200, {'Content-Type': 'text/html'});
-                res.end(data);
-            })
+            } else {
+                res.writeHead(404, { 'Content-Type': 'text/plain' });
+                res.end(message.readError);
+            }
         }
+        
         else {
             res.writeHead(404, {'Content-Type': 'text/plain'})
-            res.end("Error :" + lang.error)
+            return res.end(lang.pageNotFound.replace("{file}", this.fileHandler.filePath));
         }
        
     }
 
     start(){
         this.server.listen(this.port, () => {
+            console.log('start')
             console.log(`Server is running on port ${this.port}`);
         })
     }
@@ -78,24 +92,20 @@ class FileHandle{
         fs.appendFile(this.filePath, text + '\n', callback);
     }
 
-    readFile(callback) {
-        fs.open(this.filePath, 'a+', (err, fd) => {
+    readFile(filePath, res) {
+        fs.readFile(filePath, 'utf-8', (err, data) => {
             if (err) {
-                return callback(err);
+                res.writeHead(500, { 'Content-Type': 'text/plain' });
+                res.end(message.pageNotFound.replace("{file}", filePath));
+            } else {
+                res.writeHead(200, { 'Content-Type': 'text/plain' });
+                res.end(data);
             }
-            fs.readFile(this.filePath, 'utf8', (err, data) => {
-                fs.close(fd, () => {}); // Close the file descriptor
-                if (err) {
-                    return callback(err);
-                }
-                callback(null, data || ''); // Return empty content if file is new
-            });
         });
     }
     
 }
-const PORT =  8080; // Use environment PORT or default to 8080
-const FILE_PATH = path.join(__dirname, 'file.txt');
+
 const fileHandler = new FileHandle(FILE_PATH);
 const server = new Server(PORT, fileHandler);
 server.start();
